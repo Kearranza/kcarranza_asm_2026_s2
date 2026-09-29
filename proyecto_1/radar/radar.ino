@@ -115,6 +115,16 @@ void correlacionar(const float *senal) {
   for (int n = 0; n < N_ENV; n++) env[n] = sqrtf(re[n] * re[n] + im[n] * im[n]);
 }
 
+void correlacionarDirecta(const float *senal) {
+  // Correlacion por definicion, para comparar su costo contra la version por FFT.
+  // Da la correlacion cruda, no la envolvente: son N_ENV * N_TX productos.
+  for (int n = 0; n < N_ENV; n++) {
+    float suma = 0;
+    for (int i = 0; i < N_TX; i++) suma += senal[n + i] * chirpF[i];
+    env[n] = fabsf(suma);
+  }
+}
+
 int indiceDelMaximo(int desde, int hasta) {
   int k = desde;
   for (int n = desde; n < hasta; n++) if (env[n] > env[k]) k = n;
@@ -138,12 +148,39 @@ void calibrar() {
   Serial.printf("Listo. Camino directo en la muestra %d.\n", kDirecto);
 }
 
+void medirTiempos() {
+  // Se promedia sobre varias corridas para que el numero no dependa de una sola
+  const int repeticiones = 50;
+  int64_t t0 = esp_timer_get_time();
+  for (int r = 0; r < repeticiones; r++) {
+    for (int i = 0; i < N_FFT; i++) { re[i] = (i < N_REC) ? rx[i] : 0.0f; im[i] = 0.0f; }
+    fft(re, im, N_FFT, false);
+  }
+  float unaFft = (esp_timer_get_time() - t0) / 1000.0f / repeticiones;
+
+  t0 = esp_timer_get_time();
+  for (int r = 0; r < repeticiones; r++) correlacionar(rx);
+  float unaCorrelacion = (esp_timer_get_time() - t0) / 1000.0f / repeticiones;
+
+  t0 = esp_timer_get_time();
+  for (int r = 0; r < repeticiones; r++) correlacionarDirecta(rx);
+  float unaDirecta = (esp_timer_get_time() - t0) / 1000.0f / repeticiones;
+
+  Serial.printf("FFT de %d puntos:                %6.2f ms\n", N_FFT, unaFft);
+  Serial.printf("Correlacion por FFT:              %6.2f ms\n", unaCorrelacion);
+  Serial.printf("Correlacion directa:              %6.2f ms   (%.1fx)\n",
+                unaDirecta, unaDirecta / unaCorrelacion);
+}
+
 void medir() {
   if (!hayFondo) { Serial.println("Falta calibrar: mande k sin el objeto."); return; }
 
+  int64_t t0 = esp_timer_get_time();
   capturar(rx, PROMEDIO);
+  int64_t t1 = esp_timer_get_time();
   for (int n = 0; n < N_REC; n++) rx[n] -= fondo[n];
   correlacionar(rx);
+  int64_t t2 = esp_timer_get_time();
 
   int guarda = kDirecto + (int)ceilf(GUARDA_CM / 100.0f * 2 * FS / C_SONIDO);
   int k = indiceDelMaximo(guarda, N_ENV);
@@ -156,7 +193,8 @@ void medir() {
   float d = (interpolar(k) - kDirecto) * C_SONIDO / (2 * FS) * 100 + SEPARACION_CM / 2;
 
   if (calidad < UMBRAL_DB) Serial.printf("Sin deteccion  (mejor pico %.1f dB)\n", calidad);
-  else Serial.printf("Distancia: %6.1f cm   calidad %4.1f dB\n", d, calidad);
+  else Serial.printf("Distancia: %6.1f cm   calidad %4.1f dB   (captura %.0f ms, proceso %.1f ms)\n",
+                     d, calidad, (t1 - t0) / 1000.0f, (t2 - t1) / 1000.0f);
 }
 
 void tonoDePrueba() {
@@ -173,6 +211,7 @@ void menu() {
   Serial.println("  k  calibrar el fondo (sin el objeto)");
   Serial.println("  m  medir una vez");
   Serial.println("  l  medir en bucle hasta que mandes otra tecla");
+  Serial.println("  f  medir cuanto tardan la FFT y la correlacion");
   Serial.println("  t  tono de prueba de 1 s");
   Serial.printf("  + -  amplitud de salida (ahora %d de 127)\n", amplitud);
 }
@@ -198,6 +237,7 @@ void loop() {
       while (!Serial.available()) { medir(); delay(300); }
       while (Serial.available()) Serial.read();
       break;
+    case 'f': medirTiempos(); break;
     case 't': tonoDePrueba(); break;
     case '+': case '-':
       amplitud = constrain(amplitud + (c == '+' ? 15 : -15), 10, 127);

@@ -1,0 +1,40 @@
+== Deteccion de ecos ==
+
+  sin restar el fondo:
+    real [m]  estimado [m]   error [cm]
+        0.30         0.300          0.0
+        0.80         0.403        -39.7
+        1.50         0.800        -70.0
+
+  restando el fondo:
+    real [m]  estimado [m]   error [cm]
+        0.30         0.300         -0.0
+        0.80         0.802          0.2
+        1.50         1.501          0.1
+
+== Directa contra FFT ==
+  diferencia relativa con nuestra FFT: 1.40e-16
+  diferencia relativa con numpy.fft:   1.40e-16
+
+== Tiempos de ejecucion ==
+      N   directa [ms]   FFT propia [ms]   FFT numpy [ms]
+    256         0.072             1.868           0.0188
+    512         0.169             4.096           0.0245
+   1024         0.402             7.660           0.0403
+   2048         0.761            15.831           0.0739
+   4096         1.532            29.297           0.1476
+   8192         3.512            59.558           0.3703
+  16384         7.000           128.833           0.7613
+
+== Efecto del ruido sobre el eco mas lejano ==
+  SNR   30 dB -> 100.0 % de aciertos
+  SNR   25 dB ->  95.0 % de aciertos
+  SNR   20 dB ->  95.0 % de aciertos
+  SNR   15 dB ->  75.0 % de aciertos
+  SNR   10 dB ->  60.0 % de aciertos
+  SNR    5 dB ->  15.0 % de aciertos
+  SNR    0 dB ->   5.0 % de aciertos
+  SNR   -5 dB ->   5.0 % de aciertos
+  SNR  -10 dB ->   5.0 % de aciertos
+
+Resultados en /sessions/rcw-01krjn6wr34kmyspghbkz3mf/mnt/kcarranza-asm-2026-s2/Deteccion-ecos/resultados
