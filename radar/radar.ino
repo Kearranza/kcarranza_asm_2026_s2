@@ -1,4 +1,4 @@
-// Radar acustico en ESP32: chirp, FFT radix-2 y espectro de referencia
+// Radar acustico en ESP32: captura promediada y correlacion por FFT
 
 const int PIN_DAC = 25;
 const int PIN_MIC = 34;
@@ -6,15 +6,20 @@ const int PIN_MIC = 34;
 const float FS = 20000.0;
 const int PERIODO_US = 50;
 const int N_TX = 80;
+const int N_REC = 400;
 const int N_FFT = 512;
+const int N_ENV = N_REC - N_TX + 1;
 const float F0 = 2000.0;
 const float F1 = 5000.0;
+
+const int PROMEDIO = 8;
 
 int amplitud = 100;
 uint8_t chirpDac[N_TX];
 float chirpF[N_TX];
 float re[N_FFT], im[N_FFT];
 float txRe[N_FFT], txIm[N_FFT];
+float rx[N_REC], env[N_ENV];
 
 
 void fft(float *pre, float *pim, int n, bool inversa) {
@@ -65,13 +70,51 @@ void prepararChirp() {
   for (int i = 0; i < N_FFT; i++) { txRe[i] = re[i]; txIm[i] = -im[i]; }
 }
 
-void emitirChirp() {
-  int64_t t0 = esp_timer_get_time();
-  for (int n = 0; n < N_TX; n++) {
-    while (esp_timer_get_time() < t0 + (int64_t)n * PERIODO_US) {}
-    dacWrite(PIN_DAC, chirpDac[n]);
+void capturar(float *destino, int repeticiones) {
+  static int32_t acumulador[N_REC];
+  for (int n = 0; n < N_REC; n++) acumulador[n] = 0;
+
+  for (int r = 0; r < repeticiones; r++) {
+    // La primera lectura del ADC calibra el conversor y tarda mucho mas que las siguientes
+    for (int i = 0; i < 8; i++) { analogRead(PIN_MIC); dacWrite(PIN_DAC, 128); }
+    int64_t t0 = esp_timer_get_time();
+    for (int n = 0; n < N_REC; n++) {
+      while (esp_timer_get_time() < t0 + (int64_t)n * PERIODO_US) {}
+      dacWrite(PIN_DAC, n < N_TX ? chirpDac[n] : 128);
+      acumulador[n] += analogRead(PIN_MIC);
+    }
+    dacWrite(PIN_DAC, 128);
+    delay(30);
   }
-  dacWrite(PIN_DAC, 128);
+
+  float media = 0;
+  for (int n = 0; n < N_REC; n++) media += acumulador[n];
+  media /= (float)N_REC * repeticiones;
+  for (int n = 0; n < N_REC; n++) destino[n] = acumulador[n] / (float)repeticiones - media;
+}
+
+void correlacionar(const float *senal) {
+  for (int i = 0; i < N_FFT; i++) { re[i] = (i < N_REC) ? senal[i] : 0.0f; im[i] = 0.0f; }
+  fft(re, im, N_FFT, false);
+  for (int i = 0; i < N_FFT; i++) {
+    float pr = re[i] * txRe[i] - im[i] * txIm[i];
+    float pi = re[i] * txIm[i] + im[i] * txRe[i];
+    re[i] = pr; im[i] = pi;
+  }
+  // Anular las frecuencias negativas hace que la IFFT devuelva la senal analitica,
+  // asi el pico se busca sobre la envolvente y no sobre una correlacion que oscila
+  for (int i = N_FFT / 2 + 1; i < N_FFT; i++) { re[i] = 0.0f; im[i] = 0.0f; }
+  for (int i = 1; i < N_FFT / 2; i++) { re[i] *= 2.0f; im[i] *= 2.0f; }
+  fft(re, im, N_FFT, true);
+  for (int n = 0; n < N_ENV; n++) env[n] = sqrtf(re[n] * re[n] + im[n] * im[n]);
+}
+
+void probarCorrelacion() {
+  capturar(rx, PROMEDIO);
+  correlacionar(rx);
+  int k = 0;
+  for (int n = 0; n < N_ENV; n++) if (env[n] > env[k]) k = n;
+  Serial.printf("Pico de correlacion en la muestra %d (valor %.0f)\n", k, env[k]);
 }
 
 void tonoDePrueba() {
@@ -85,7 +128,7 @@ void tonoDePrueba() {
 
 void menu() {
   Serial.println("\n--- Radar acustico ---");
-  Serial.println("  e  emitir el chirp una vez");
+  Serial.println("  p  emitir y correlacionar");
   Serial.println("  t  tono de prueba de 1 s");
   Serial.printf("  + -  amplitud de salida (ahora %d de 127)\n", amplitud);
 }
@@ -93,6 +136,8 @@ void menu() {
 void setup() {
   Serial.begin(115200);
   delay(300);
+  analogReadResolution(12);
+  analogSetPinAttenuation(PIN_MIC, ADC_11db);
   prepararChirp();
   dacWrite(PIN_DAC, 128);
   menu();
@@ -102,7 +147,7 @@ void loop() {
   if (!Serial.available()) return;
   char c = Serial.read();
   switch (c) {
-    case 'e': emitirChirp(); break;
+    case 'p': probarCorrelacion(); break;
     case 't': tonoDePrueba(); break;
     case '+': case '-':
       amplitud = constrain(amplitud + (c == '+' ? 15 : -15), 10, 127);
