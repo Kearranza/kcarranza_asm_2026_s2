@@ -1,4 +1,4 @@
-// Radar acustico en ESP32: calibracion de fondo y estimacion de la 
+// Radar acustico en ESP32: genera el chirp, captura el eco, correlaciona por FFT y estima la distancia
 
 const int PIN_DAC = 25;
 const int PIN_MIC = 34;
@@ -15,6 +15,7 @@ const float F1 = 5000.0;
 const float C_SONIDO = 343.0;
 const float SEPARACION_CM = 7.0;
 const float GUARDA_CM = 8.0;
+const float UMBRAL_DB = 10.0;
 const int PROMEDIO = 8;
 
 int amplitud = 100;
@@ -147,8 +148,15 @@ void medir() {
   int guarda = kDirecto + (int)ceilf(GUARDA_CM / 100.0f * 2 * FS / C_SONIDO);
   int k = indiceDelMaximo(guarda, N_ENV);
 
+  float piso = 0;
+  for (int n = guarda; n < N_ENV; n++) piso += env[n];
+  piso /= (N_ENV - guarda);
+  float calidad = 20 * log10f(env[k] / (piso > 0 ? piso : 1e-9f));
+
   float d = (interpolar(k) - kDirecto) * C_SONIDO / (2 * FS) * 100 + SEPARACION_CM / 2;
-  Serial.printf("Distancia: %6.1f cm\n", d);
+
+  if (calidad < UMBRAL_DB) Serial.printf("Sin deteccion  (mejor pico %.1f dB)\n", calidad);
+  else Serial.printf("Distancia: %6.1f cm   calidad %4.1f dB\n", d, calidad);
 }
 
 void tonoDePrueba() {
@@ -164,6 +172,7 @@ void menu() {
   Serial.println("\n--- Radar acustico ---");
   Serial.println("  k  calibrar el fondo (sin el objeto)");
   Serial.println("  m  medir una vez");
+  Serial.println("  l  medir en bucle hasta que mandes otra tecla");
   Serial.println("  t  tono de prueba de 1 s");
   Serial.printf("  + -  amplitud de salida (ahora %d de 127)\n", amplitud);
 }
@@ -184,6 +193,11 @@ void loop() {
   switch (c) {
     case 'k': calibrar(); break;
     case 'm': medir(); break;
+    case 'l':
+      while (Serial.available()) Serial.read();
+      while (!Serial.available()) { medir(); delay(300); }
+      while (Serial.available()) Serial.read();
+      break;
     case 't': tonoDePrueba(); break;
     case '+': case '-':
       amplitud = constrain(amplitud + (c == '+' ? 15 : -15), 10, 127);
