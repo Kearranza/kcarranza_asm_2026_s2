@@ -1,0 +1,7 @@
+metodo,real_m,estimado_m,error_cm
+sin restar el fondo,0.3,0.3001,0.01
+sin restar el fondo,0.8,0.4029,-39.71
+sin restar el fondo,1.5,0.8003,-69.97
+restando el fondo,0.3,0.2995,-0.05
+restando el fondo,0.8,0.8019,0.19
+restando el fondo,1.5,1.5011,0.11
